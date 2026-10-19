@@ -1,0 +1,17 @@
+{
+  "name": "晨光小镇",
+  "start_hour": 8,
+  "max_ticks": 24,
+  "locations": [
+    {"id": "cafe", "name": "风铃咖啡馆", "description": "咖啡香气与邻里的闲聊", "x": 22, "y": 25},
+    {"id": "library", "name": "树下图书馆", "description": "整理书架，也收集新的故事", "x": 77, "y": 24},
+    {"id": "square", "name": "中心广场", "description": "居民相遇、分享近况的地方", "x": 50, "y": 53},
+    {"id": "homes", "name": "居民小屋", "description": "忙碌之后，回家恢复精力", "x": 23, "y": 78},
+    {"id": "park", "name": "向日葵公园", "description": "照料植物，让小镇慢下来", "x": 78, "y": 76}
+  ],
+  "npcs": [
+    {"id": "lin", "name": "小林", "role": "咖啡师", "goal": "让今天来店里的居民喝上一杯好咖啡", "color": "#bc785b", "home": "homes", "workplace": "cafe", "location": "square", "energy": 75, "work_text": "准备了一批新鲜咖啡"},
+    {"id": "lan", "name": "阿岚", "role": "图书管理员", "goal": "把图书整理好，认识一位新朋友", "color": "#6889a2", "home": "homes", "workplace": "library", "location": "square", "energy": 65, "work_text": "整理了一层书架"},
+    {"id": "qiao", "name": "小乔", "role": "园丁", "goal": "照顾好公园的花，也记得休息", "color": "#78966a", "home": "homes", "workplace": "park", "location": "square", "energy": 45, "work_text": "照料了一片向日葵"}
+  ]
+}

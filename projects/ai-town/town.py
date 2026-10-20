@@ -61,7 +61,8 @@ def load_world(path=CONFIG_PATH):
                 raise ValueError(f"{npc['name']} 的 {key} 必须指向已有地点。")
         if type(npc.get("energy")) is not int or not 0 <= npc["energy"] <= 100:
             raise ValueError(f"{npc['name']} 的 energy 必须是 0 到 100 的整数。")
-        npc.update(status="刚来到小镇", memory=[], last_action=None, last_observation=None)
+        npc.update(status="刚来到小镇", memory=[], last_chat_ticks={},
+                   last_action=None, last_observation=None)
     data.update(tick=0, mode="rules", finished=False, events=[])
     data["time_label"] = time_label(data)
     for npc in npcs:
@@ -89,6 +90,7 @@ def observe(world, npc_id):
         "nearby": [other["name"] for other in nearby],
         "nearby_ids": [other["id"] for other in nearby],
         "memory": deepcopy(npc["memory"][-MEMORY_LIMIT:]),
+        "last_chat_ticks": deepcopy(npc["last_chat_ticks"]),
     }
 
 
@@ -98,13 +100,12 @@ def choose_action(npc, observation):
         if npc["location"] != npc["home"]:
             return {"type": "move", "target": npc["home"], "reason": "精力不足，先回家休息。"}
         return {"type": "rest", "reason": "在家恢复精力，休息好了再出发。"}
-    recent_chat = any(
-        item.get("action") == "talk" and observation["tick"] - item["tick"] < 4
-        for item in observation["memory"]
-    )
-    if observation["nearby_ids"] and not recent_chat:
-        return {"type": "talk", "target": observation["nearby_ids"][0],
-                "reason": "附近有熟悉的面孔，先打个招呼。"}
+    for person_id in observation["nearby_ids"]:
+        last_chat_tick = observation["last_chat_ticks"].get(person_id)
+        if last_chat_tick is not None and observation["tick"] - last_chat_tick < 4:
+            continue  # 只跳过这个人，继续检查下一位附近居民。
+        return {"type": "talk", "target": person_id,
+                "reason": "附近有居民，且最近四轮内没有与对方交谈，打个招呼。"}
     if npc["location"] != npc["workplace"]:
         return {"type": "move", "target": npc["workplace"], "reason": "精力充足，前往自己的工作地点。"}
     if observation["tick"] % 4 == 0 and npc["energy"] > 45:
@@ -112,8 +113,11 @@ def choose_action(npc, observation):
     return {"type": "work", "reason": "已经到工作地点，完成手头的一件小事。"}
 
 
-def remember(npc, tick, text, action):
-    npc["memory"].append({"tick": tick, "text": text, "action": action})
+def remember(npc, tick, text, action, partner_id=None):
+    entry = {"tick": tick, "text": text, "action": action}
+    if partner_id is not None:
+        entry["partner_id"] = partner_id
+    npc["memory"].append(entry)
     del npc["memory"][:-MEMORY_LIMIT]
 
 
@@ -154,9 +158,14 @@ def apply_action(world, npc_id, action):
     npc["energy"] = max(0, min(100, npc["energy"] + cost))
     npc["status"] = text
     npc["last_action"] = deepcopy(action)
-    remember(npc, world["tick"], text, kind)
+    remember(npc, world["tick"], text, kind,
+             partner_id=listener["id"] if listener is not None else None)
     if listener is not None:
-        remember(listener, world["tick"], f"{npc['name']}向我打了招呼。", "talk")
+        # 最近交谈轮次单独保留，不随 12 条近期事件的裁剪而遗忘。
+        npc["last_chat_ticks"][listener["id"]] = world["tick"]
+        listener["last_chat_ticks"][npc_id] = world["tick"]
+        remember(listener, world["tick"], f"{npc['name']}向我打了招呼。", "talk",
+                 partner_id=npc_id)
     world["events"].append({"tick": world["tick"], "time": time_label(world),
                             "npc_id": npc_id, "npc_name": npc["name"],
                             "action": kind, "text": text, "reason": action["reason"]})

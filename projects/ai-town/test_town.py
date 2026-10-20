@@ -9,7 +9,10 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from town import CONFIG_PATH, MEMORY_LIMIT, apply_action, load_world, observe, snapshot, step
+from town import (
+    CONFIG_PATH, MEMORY_LIMIT, apply_action, choose_action, load_world, observe,
+    snapshot, step,
+)
 
 
 class TownBehaviorTests(unittest.TestCase):
@@ -162,6 +165,115 @@ class TownBehaviorTests(unittest.TestCase):
         state["npcs"][0]["last_observation"]["energy"] = -1
         state["events"][0]["reason"] = "修改副本日志"
         self.assertEqual(self.world, before)
+
+    def test_chat_records_both_partners_and_skips_only_recent_partner(self):
+        """双方都记住交谈对象；同轮不能反向重聊，但可继续找另一人。"""
+        first, second, third = self.world["npcs"]
+        for npc in self.world["npcs"]:
+            npc.update(location="square", energy=90)
+        apply_action(self.world, first["id"],
+                     {"type": "talk", "target": second["id"], "reason": "首次问候"})
+
+        self.assertEqual(first["last_chat_ticks"], {second["id"]: 0})
+        self.assertEqual(second["last_chat_ticks"], {first["id"]: 0})
+        self.assertEqual(first["memory"][-1]["partner_id"], second["id"])
+        self.assertEqual(second["memory"][-1]["partner_id"], first["id"])
+        self.assertEqual(third["last_chat_ticks"], {})
+        for npc in (first, second):
+            with self.subTest(resident=npc["id"]):
+                action = choose_action(npc, observe(self.world, npc["id"]))
+                self.assertEqual(action["type"], "talk")
+                self.assertEqual(action["target"], third["id"])
+
+        # 即使还有可交谈的人，精力不足仍先处理休息需求。
+        first["energy"] = 20
+        action = choose_action(first, observe(self.world, first["id"]))
+        self.assertEqual(action["type"], "move")
+        self.assertEqual(action["target"], first["home"])
+        first["location"] = third["location"] = first["home"]
+        self.assertEqual(choose_action(first, observe(self.world, first["id"]))["type"], "rest")
+
+    def test_chat_cooldown_counts_world_ticks_and_preserves_tick_zero(self):
+        """第0轮的记录有效；距上次交谈3轮禁止，4轮允许，双方规则一致。"""
+        first, second, third = self.world["npcs"]
+        first.update(location="square", energy=90)
+        second.update(location="square", energy=90)
+        third["location"] = "park"
+        apply_action(self.world, first["id"],
+                     {"type": "talk", "target": second["id"], "reason": "第0轮交谈"})
+
+        for elapsed in (3, 4):
+            self.world["tick"] = elapsed
+            for npc, partner in ((first, second), (second, first)):
+                with self.subTest(elapsed=elapsed, resident=npc["id"]):
+                    action = choose_action(npc, observe(self.world, npc["id"]))
+                    if elapsed == 3:
+                        self.assertNotEqual(action["type"], "talk")
+                    else:
+                        self.assertEqual(action["type"], "talk")
+                        self.assertEqual(action["target"], partner["id"])
+
+    def test_blocked_or_absent_neighbors_do_not_stop_normal_routine(self):
+        """找不到合适交谈对象时，继续前往工作地点或执行工作。"""
+        for nearby in (True, False):
+            for at_work in (True, False):
+                with self.subTest(nearby=nearby, at_work=at_work):
+                    world = load_world()
+                    world["tick"] = 1
+                    resident = world["npcs"][0]
+                    resident["energy"] = 90
+                    resident["location"] = resident["workplace"] if at_work else "square"
+                    for other in world["npcs"][1:]:
+                        other["location"] = resident["location"] if nearby else "park"
+                        resident["last_chat_ticks"][other["id"]] = 1
+                    action = choose_action(resident, observe(world, resident["id"]))
+                    self.assertEqual(action["type"], "work" if at_work else "move")
+                    if not at_work:
+                        self.assertEqual(action["target"], resident["workplace"])
+
+    def test_chat_cooldown_survives_short_memory_trimming(self):
+        """12人密集交谈挤掉旧记忆后，仍不能提前与同一对象再次交谈。"""
+        config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        template = config["npcs"][0]
+        config["npcs"] = []
+        for index in range(12):
+            npc = deepcopy(template)
+            npc.update(id=f"resident_{index}", name=f"居民{index}", energy=100,
+                       location="square", workplace="square")
+            config["npcs"].append(npc)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "world.json"
+            path.write_text(json.dumps(config), encoding="utf-8")
+            world = load_world(path)
+
+        first, second = world["npcs"][:2]
+        for _ in range(3):
+            step(world)
+        self.assertEqual(first["last_chat_ticks"][second["id"]], 1)
+        self.assertEqual(len(first["memory"]), MEMORY_LIMIT)
+        self.assertFalse(any(item.get("partner_id") == second["id"]
+                             for item in first["memory"]))
+        step(world)
+        self.assertNotEqual(first["last_action"]["type"], "talk")
+        self.assertEqual(first["last_chat_ticks"][second["id"]], 1)
+        step(world)
+        self.assertEqual(first["last_action"]["type"], "talk")
+        self.assertEqual(first["last_action"]["target"], second["id"])
+
+    def test_observation_chat_history_is_private_and_independent(self):
+        """观察只包含本人交谈记录，修改返回字典不影响任何居民。"""
+        first, second, third = self.world["npcs"]
+        first["location"] = second["location"] = "square"
+        self.world["tick"] = 2
+        apply_action(self.world, first["id"],
+                     {"type": "talk", "target": second["id"], "reason": "检查独立记录"})
+        observation = observe(self.world, first["id"])
+        self.assertEqual(observation["last_chat_ticks"], {second["id"]: 2})
+        observation["last_chat_ticks"][second["id"]] = 999
+        observation["last_chat_ticks"][third["id"]] = 999
+        self.assertEqual(first["last_chat_ticks"], {second["id"]: 2})
+        self.assertEqual(second["last_chat_ticks"], {first["id"]: 2})
+        self.assertEqual(third["last_chat_ticks"], {})
 
 
 if __name__ == "__main__":

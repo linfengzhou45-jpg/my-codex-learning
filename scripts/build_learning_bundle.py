@@ -7,6 +7,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 FILES = [
     ".gitignore", "README.md", "LEARNING_METHODS.md", "AGENTS.md", "START_HERE.md",
+    "HANDOFF_LOCAL.md",
     "topics/agent-systems/README.md", "topics/agent-systems/ROADMAP.md",
     "projects/ai-town/README.md", "projects/ai-town/world.json",
     "projects/ai-town/town.py", "projects/ai-town/main.py", "projects/ai-town/server.py",

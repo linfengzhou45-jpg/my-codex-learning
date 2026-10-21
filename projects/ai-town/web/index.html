@@ -15,7 +15,7 @@
           <span class="brand-mark" aria-hidden="true"><span></span></span>
           <span>晨光小镇<small>AGENT LEARNING LAB</small></span>
         </a>
-        <div class="stage-badge"><span class="status-dot" aria-hidden="true"></span>阶段 1 · 规则演示</div>
+        <div class="stage-badge"><span class="status-dot" aria-hidden="true"></span><span id="stage-label">正在连接小镇</span></div>
       </header>
 
       <main>
@@ -25,7 +25,7 @@
             <h1 id="page-title">让想法，在小镇里发生<span class="title-dot">。</span></h1>
             <p class="intro-copy">观察居民如何感知环境、选择行动，理解一个 Agent 的运行过程。</p>
           </div>
-          <div class="mode-note"><span class="note-symbol" aria-hidden="true">i</span><p>当前居民按预设规则行动<br><strong>尚未接入大语言模型</strong></p></div>
+          <div class="mode-note"><span class="note-symbol" aria-hidden="true">i</span><p id="mode-summary">连接后显示居民的决策方式。</p></div>
         </section>
 
         <section class="cycle-strip" aria-label="Agent 的四步循环">
@@ -71,7 +71,7 @@
               <span>3 位居民 · 5 个地点</span>
             </div>
             <div class="playback-controls">
-              <button type="button" class="button button-primary" id="step-button" disabled><span aria-hidden="true">＋</span>推进一轮</button>
+              <button type="button" class="button button-primary" id="step-button" disabled><span aria-hidden="true">＋</span><span id="step-label">推进一轮</span></button>
               <button type="button" class="button button-secondary" id="auto-button" disabled><span id="auto-icon" aria-hidden="true">▷</span><span id="auto-label">自动运行</span></button>
               <button type="button" class="button button-quiet" id="reset-button" disabled><span aria-hidden="true">↻</span>重置小镇</button>
               <p id="playback-status">每轮 30 分钟 · 最多 24 轮</p>
@@ -91,11 +91,11 @@
             <div id="event-list" class="event-list" role="list" aria-label="最近的行动记录"><div class="journal-empty"><span aria-hidden="true">✎</span><p>新的一天，故事还没开始。<br><small>推进一轮，看看居民们会去哪里。</small></p></div></div>
           </section>
           <section class="lesson-card" aria-labelledby="lesson-heading">
-            <div class="lesson-top"><span class="lesson-label">你的第一堂实验课</span><span aria-hidden="true">↗</span></div>
+            <div class="lesson-top"><span class="lesson-label" id="lesson-label">你的第一堂实验课</span><span aria-hidden="true">↗</span></div>
             <h2 id="lesson-heading">一点小改动，<br>会带来什么变化？</h2>
-            <p>修改 <code>world.json</code> 里一位居民的 <code>energy</code>（能量），再点「重置小镇」并推进一轮。</p>
-            <div class="lesson-prompt"><span aria-hidden="true">?</span><p>它的下一步行动变了吗？<br>到观察室寻找原因。</p></div>
-            <span class="lesson-footnote">先预测 → 再运行 → 对照结果</span>
+            <p id="lesson-copy">修改 <code>world.json</code> 里一位居民的 <code>energy</code>（能量），再点「重置小镇」并推进一轮。</p>
+            <div class="lesson-prompt"><span aria-hidden="true">?</span><p id="lesson-prompt">它的下一步行动变了吗？<br>到观察室寻找原因。</p></div>
+            <span class="lesson-footnote" id="lesson-footnote">先预测 → 再运行 → 对照结果</span>
           </section>
         </div>
       </main>

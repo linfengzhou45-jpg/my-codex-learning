@@ -13,6 +13,7 @@ let busy = false;
 let autoRunning = false;
 let autoTimer = null;
 let hasError = false;
+let activePath = null;
 const AUTO_INTERVAL_MS = 1800;
 const knownLocations = new Set(["square", "cafe", "library", "park", "homes"]);
 const fallbackColors = ["#ba8167", "#809a86", "#bb9b59"];
@@ -46,6 +47,52 @@ function maxTicks() {
 
 function finished() {
   return Boolean(state && (state.finished || state.tick >= maxTicks()));
+}
+
+function modelMode() {
+  return state?.mode === "mixed";
+}
+
+function modelBudgetExhausted() {
+  const runtime = state?.model_runtime;
+  return modelMode() && runtime && Number.isFinite(runtime.max_calls)
+    && runtime.calls_used >= runtime.max_calls;
+}
+
+function controllerLabel(npc) {
+  return npc.controller === "model" ? "模型决策" : "规则决策";
+}
+
+function renderMode() {
+  const runtime = state.model_runtime;
+  const modelResident = state.npcs.find((npc) => npc.controller === "model");
+  $("stage-label").textContent = modelMode() ? "模型 + 规则对照" : "阶段 1 · 规则演示";
+  const summary = $("mode-summary");
+  if (modelMode()) {
+    const modelName = runtime?.model || modelResident?.model || "待确认模型";
+    summary.replaceChildren(
+      document.createTextNode(`${modelResident?.name || "指定居民"}使用 ${modelName}，其他居民按规则行动。`),
+      node("br"),
+      node("strong", "", runtime
+        ? `本次启动已发起 ${runtime.calls_used} / ${runtime.max_calls} 次模型请求（含失败）`
+        : "仅手动推进，逐轮观察模型决策。")
+    );
+    $("lesson-label").textContent = "一次真实模型决策";
+    $("lesson-heading").textContent = "模型选择了什么，世界实际发生了什么？";
+    $("lesson-copy").textContent = "手动推进一轮，选中使用模型的居民，展开观察室里的模型输入和返回动作，再核对位置、精力与交谈记录。";
+    $("lesson-prompt").textContent = "观察返回动作是否真正执行；调用失败会明确显示，不会改用规则冒充模型成功。";
+    $("lesson-footnote").textContent = "观察输入 → 查看决策 → 核对结果";
+    $("reset-description").textContent = "将清空当前行动记录和居民记忆，并重新读取 world.json。小镇时间回到起点；本次启动已使用的模型请求次数不会清零。";
+  } else {
+    summary.replaceChildren(document.createTextNode("当前居民按预设规则行动"), node("br"),
+      node("strong", "", "尚未启用大语言模型"));
+    $("lesson-label").textContent = "你的第一堂实验课";
+    $("lesson-heading").textContent = "一点小改动，会带来什么变化？";
+    $("lesson-copy").textContent = "修改 world.json 里一位居民的 energy（能量），再点「重置小镇」并推进一轮。";
+    $("lesson-prompt").textContent = "它的下一步行动变了吗？到观察室寻找原因。";
+    $("lesson-footnote").textContent = "先预测 → 再运行 → 对照结果";
+    $("reset-description").textContent = "将清空当前行动记录和居民记忆，并重新读取 world.json。小镇时间回到起点。";
+  }
 }
 
 function selectNpc(id) {
@@ -107,6 +154,31 @@ function detailBlock(number, heading, text) {
   return block;
 }
 
+function traceDisclosure(title, value) {
+  const disclosure = node("details", "trace-disclosure");
+  disclosure.append(node("summary", "", title));
+  const content = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  disclosure.append(node("pre", "trace-content", content));
+  return disclosure;
+}
+
+function modelTrace(npc) {
+  const block = detailBlock("05", "模型决策记录");
+  block.classList.add("model-trace");
+  const decision = npc.last_decision;
+  if (decision?.source !== "model") {
+    block.append(node("p", "", "还没有成功执行的模型决策。手动推进一轮后，这里会显示发送内容和返回动作。"));
+    return block;
+  }
+  block.append(node("p", "trace-model", `本次决策来源：${decision.model || npc.model || "模型"}`));
+  block.append(traceDisclosure("发给模型的内容", decision.input));
+  block.append(traceDisclosure("模型返回的动作", decision.action));
+  const usage = decision.usage || {};
+  const tokenValue = (key) => Number.isFinite(usage[key]) ? String(usage[key]) : "未提供";
+  block.append(node("p", "trace-usage", `本次用量：输入 ${tokenValue("prompt_tokens")} · 输出 ${tokenValue("completion_tokens")} · 合计 ${tokenValue("total_tokens")} token`));
+  return block;
+}
+
 function renderResidents() {
   // Preserve keyboard focus when clicking a resident tab replaces the list.
   const focusedNpc = document.activeElement?.closest(".resident-tab")?.dataset.npcId;
@@ -116,8 +188,9 @@ function renderResidents() {
     button.type = "button";
     button.dataset.npcId = npc.id;
     button.setAttribute("aria-pressed", String(npc.id === selectedId));
-    button.setAttribute("aria-label", `查看居民${npc.name}`);
+    button.setAttribute("aria-label", `查看居民${npc.name}，${controllerLabel(npc)}`);
     button.append(avatar(npc, index), node("span", "", npc.name));
+    button.append(node("small", "resident-controller", npc.controller === "model" ? "模型" : "规则"));
     button.addEventListener("click", () => selectNpc(npc.id));
     tabs.append(button);
   });
@@ -132,6 +205,8 @@ function renderResidents() {
   portrait.append(avatar(npc, state.npcs.indexOf(npc)));
   const identityText = node("div", "identity-text");
   identityText.append(node("h3", "", npc.name), node("p", "", npc.role));
+  identityText.append(node("span", `controller-badge${npc.controller === "model" ? " controller-model" : ""}`,
+    npc.controller === "model" ? `模型决策 · ${npc.model || state.model_runtime?.model || "待确认模型"}` : "规则决策"));
   identityText.append(node("span", "status-pill", `${locationName(npc.location)} · ${npc.status || "等待行动"}`));
   identity.append(portrait, identityText);
 
@@ -158,9 +233,13 @@ function renderResidents() {
     ? `${observation.time}，在${locationName(observation.location)}，能量 ${observation.energy}。${nearby}。`
     : "还没有观察记录。推进一轮，看看它注意到了什么。";
   const observed = detailBlock("01", "行动前的观察", observationText);
-  const decided = detailBlock("02", "为什么这样行动", npc.last_action?.reason || "等待第一次决定。规则会根据时间、地点和能量选择下一步。" );
+  const pendingDecision = npc.controller === "model"
+    ? "等待第一次模型决策。模型将根据角色、目标、观察和记忆选择下一步。"
+    : "等待第一次决定。规则会根据时间、地点和能量选择下一步。";
+  const decided = detailBlock("02", "为什么这样行动", npc.last_action?.reason || pendingDecision);
   const acted = detailBlock("03", "刚刚执行的行动", npc.last_action ? npc.status : "还没有执行行动。");
   const memories = detailBlock("04", "最近的记忆");
+  memories.classList.add("memory-block");
   if (npc.memory?.length) {
     const list = node("ul", "memory-list");
     npc.memory.slice(-3).reverse().forEach((memory) => {
@@ -173,6 +252,7 @@ function renderResidents() {
     memories.append(node("p", "", "记忆还是空白的。每次行动后，这里都会留下记录。"));
   }
   $("resident-detail").replaceChildren(identity, goal, energySection, observed, decided, acted, memories);
+  if (npc.controller === "model") $("resident-detail").append(modelTrace(npc));
 }
 
 function renderEvents() {
@@ -212,18 +292,22 @@ function renderEvents() {
 
 function updateControls() {
   const unavailable = !state || finished() || hasError;
-  ui.step.disabled = busy || unavailable || autoRunning;
-  ui.auto.disabled = !autoRunning && (busy || unavailable);
+  ui.step.disabled = busy || unavailable || autoRunning || modelBudgetExhausted();
+  ui.auto.disabled = modelMode() || (!autoRunning && (busy || unavailable));
   ui.reset.disabled = busy || !state;
   ui.retry.disabled = busy;
-  $("auto-label").textContent = autoRunning ? "暂停运行" : "自动运行";
+  $("auto-label").textContent = modelMode() ? "模型模式仅手动" : autoRunning ? "暂停运行" : "自动运行";
+  $("step-label").textContent = busy && modelMode() && activePath === "/api/step" ? "等待模型决策…" : "推进一轮";
+  ui.auto.title = modelMode() ? "本次练习逐轮观察模型输入和执行结果。" : "";
   $("auto-icon").textContent = autoRunning ? "Ⅱ" : "▷";
   ui.auto.setAttribute("aria-pressed", String(autoRunning));
   let text = `每轮 30 分钟 · 最多 ${maxTicks()} 轮`;
   if (finished()) text = "本轮演示结束 · 重置可重新开始";
-  else if (busy) text = "正在同步小镇状态…";
+  else if (busy) text = modelMode() && activePath === "/api/step" ? "正在等待模型回复并执行本轮行动…" : "正在同步小镇状态…";
   else if (autoRunning) text = "自动运行中 · 每轮 30 分钟";
-  else if (hasError) text = "连接已暂停 · 请重新连接";
+  else if (hasError) text = "操作已暂停 · 重新连接可读取当前状态";
+  else if (modelBudgetExhausted()) text = "本次启动的模型请求额度已用完 · 重置不会清零";
+  else if (modelMode()) text = "每轮 30 分钟 · 每次手动推进最多发起一次模型请求";
   $("playback-status").textContent = text;
 }
 
@@ -234,6 +318,7 @@ function render() {
   $("map-caption").textContent = finished() ? "今天的故事，先到这里" : state.tick === 0 ? "晨光正好，准备开始" : "平凡的一天，也有新的发现";
   $("town-map").setAttribute("aria-busy", "false");
   $("map-loading").hidden = true;
+  renderMode();
   // Keep focus on a map resident after the DOM is refreshed by a round.
   const focusedNpc = document.activeElement?.closest(".npc-token")?.dataset.npcId;
   renderLocations();
@@ -256,9 +341,10 @@ function pause() {
 async function requestState(path, method = "GET") {
   if (busy) return false;
   busy = true;
+  activePath = path;
   updateControls();
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 10000);
+  const timeout = setTimeout(() => controller.abort(), modelMode() && path === "/api/step" ? 65000 : 10000);
   try {
     const options = { method, signal: controller.signal, cache: "no-store" };
     if (method === "POST") {
@@ -276,7 +362,7 @@ async function requestState(path, method = "GET") {
     state = result;
     hasError = false;
     ui.error.hidden = true;
-    if (finished()) pause();
+    if (finished() || modelMode()) pause();
     render();
     return true;
   } catch (error) {
@@ -286,19 +372,40 @@ async function requestState(path, method = "GET") {
     const detail = error.name === "AbortError"
       ? "连接超时。重新连接会读取小镇的最新状态。"
       : error.message || "无法连接小镇服务。";
-    $("error-message").textContent = `${detail} 自动运行已停止。`;
+    $("error-message").textContent = modelMode() ? detail : `${detail} 自动运行已停止。`;
+    // A rejected model request may still consume a request allowance. Refresh
+    // only the state; never retry POST automatically or hide the original error.
+    if (modelMode() && path === "/api/step") {
+      const refreshController = new AbortController();
+      const refreshTimeout = setTimeout(() => refreshController.abort(), 10000);
+      try {
+        const response = await fetch("/api/state", { cache: "no-store", signal: refreshController.signal });
+        if (response.ok) {
+          const latest = await response.json();
+          if (Array.isArray(latest.locations) && Array.isArray(latest.npcs) && Number.isInteger(latest.tick)) {
+            state = latest;
+            render();
+          }
+        }
+      } catch {
+        // Keep the original, actionable failure message visible.
+      } finally {
+        clearTimeout(refreshTimeout);
+      }
+    }
     $("town-map").setAttribute("aria-busy", "false");
     if (!state) $("map-loading").textContent = "小镇暂未连接，请点击上方「重新连接」。";
     return false;
   } finally {
     clearTimeout(timeout);
     busy = false;
+    activePath = null;
     updateControls();
   }
 }
 
 async function automaticStep() {
-  if (!autoRunning || finished()) return;
+  if (!autoRunning || finished() || modelMode()) return;
   const success = await requestState("/api/step", "POST");
   // Schedule only after the previous request settles: slow requests never overlap.
   if (success && autoRunning && !finished()) autoTimer = setTimeout(automaticStep, AUTO_INTERVAL_MS);
@@ -307,7 +414,7 @@ async function automaticStep() {
 ui.step.addEventListener("click", () => requestState("/api/step", "POST"));
 ui.auto.addEventListener("click", () => {
   if (autoRunning) return pause();
-  if (busy || !state || finished() || hasError) return;
+  if (busy || !state || finished() || hasError || modelMode()) return;
   autoRunning = true;
   updateControls();
   automaticStep();

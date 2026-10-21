@@ -1,4 +1,4 @@
-"""第一阶段：用明确的 Python 规则观察 NPC 的状态变化，没有模型调用。"""
+"""小镇状态与执行器：支持规则对照和单个 NPC 的模型决策。"""
 
 from copy import deepcopy
 import json
@@ -61,8 +61,8 @@ def load_world(path=CONFIG_PATH):
                 raise ValueError(f"{npc['name']} 的 {key} 必须指向已有地点。")
         if type(npc.get("energy")) is not int or not 0 <= npc["energy"] <= 100:
             raise ValueError(f"{npc['name']} 的 energy 必须是 0 到 100 的整数。")
-        npc.update(status="刚来到小镇", memory=[], last_chat_ticks={},
-                   last_action=None, last_observation=None)
+        npc.update(status="刚来到小镇", memory=[], last_chat_ticks={}, controller="rules",
+                   last_action=None, last_observation=None, last_decision=None)
     data.update(tick=0, mode="rules", finished=False, events=[])
     data["time_label"] = time_label(data)
     for npc in npcs:
@@ -152,7 +152,10 @@ def apply_action(world, npc_id, action):
         listener = get_npc(world, target)
         if listener["location"] != npc["location"]:
             raise ValueError("只能与同一地点的居民打招呼。")
-        text, cost = f"对{listener['name']}说：今天过得怎么样？忙完也记得休息！", -4
+        speech = action.get("speech", "今天过得怎么样？忙完也记得休息！")
+        if not isinstance(speech, str) or not 1 <= len(speech.strip()) <= 500:
+            raise ValueError("交谈内容必须是1至500字的非空文字。")
+        text, cost = f"对{listener['name']}说：{speech}", -4
     if kind == "move":
         npc["location"] = target
     npc["energy"] = max(0, min(100, npc["energy"] + cost))
@@ -164,7 +167,7 @@ def apply_action(world, npc_id, action):
         # 最近交谈轮次单独保留，不随 12 条近期事件的裁剪而遗忘。
         npc["last_chat_ticks"][listener["id"]] = world["tick"]
         listener["last_chat_ticks"][npc_id] = world["tick"]
-        remember(listener, world["tick"], f"{npc['name']}向我打了招呼。", "talk",
+        remember(listener, world["tick"], f"{npc['name']}对我说：{speech}", "talk",
                  partner_id=npc_id)
     world["events"].append({"tick": world["tick"], "time": time_label(world),
                             "npc_id": npc_id, "npc_name": npc["name"],
@@ -172,18 +175,35 @@ def apply_action(world, npc_id, action):
     del world["events"][:-EVENT_LIMIT]
 
 
-def step(world):
-    """一轮等于小镇 30 分钟；居民依次观察和行动，不是同时行动。"""
-    if world["finished"]:
-        return world
+def _step_in_place(world, model_decider=None):
     world["tick"] += 1
     for npc in world["npcs"]:
         observation = observe(world, npc["id"])
-        action = choose_action(npc, observation)
+        if model_decider is not None and npc["id"] == "lin":
+            # 模型直接选动作，不先经过精力或交谈间隔的规则策略。
+            action, decision = model_decider.decide(world, npc, observation)
+        else:
+            action = choose_action(npc, observation)
+            decision = {"source": "rules", "action": deepcopy(action)}
         npc["last_observation"] = observation
         apply_action(world, npc["id"], action)
+        npc["last_decision"] = deepcopy(decision)
+        world["events"][-1]["source"] = decision["source"]
     world["time_label"] = time_label(world)
     world["finished"] = world["tick"] >= world["max_ticks"]
+    return world
+
+
+def step(world, model_decider=None):
+    """一轮30分钟，依次行动；模型模式整轮成功后才提交世界变化。"""
+    if world["finished"]:
+        return world
+    if model_decider is None:
+        return _step_in_place(world)
+    candidate = deepcopy(world)
+    _step_in_place(candidate, model_decider)
+    world.clear()
+    world.update(candidate)
     return world
 
 

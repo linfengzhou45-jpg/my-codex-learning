@@ -10,6 +10,8 @@ FILES = [
     "topics/agent-systems/README.md", "topics/agent-systems/ROADMAP.md",
     "projects/ai-town/README.md", "projects/ai-town/world.json",
     "projects/ai-town/town.py", "projects/ai-town/main.py", "projects/ai-town/server.py",
+    "projects/ai-town/model.py", "projects/ai-town/test_model.py",
+    "projects/ai-town/start-deepseek-mac.command",
     "projects/ai-town/start-mac.command", "projects/ai-town/start-windows.bat",
     "projects/ai-town/test_town.py", "projects/ai-town/web/index.html",
     "projects/ai-town/web/styles.css", "projects/ai-town/web/app.js",
